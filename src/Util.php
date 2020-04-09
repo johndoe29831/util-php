@@ -11,6 +11,7 @@ final class Util
 
     /**
      * python startsWith
+     * @see https://qiita.com/satoshi-nishinaka/items/f15ccbcf8b8f91c1e2dd
      *
      * @param [type] $haystack
      * @param [type] $needle
@@ -27,6 +28,7 @@ final class Util
 
     /**
      * python endsWith
+     * @see https://qiita.com/satoshi-nishinaka/items/f15ccbcf8b8f91c1e2dd
      *
      * @param [type] $haystack
      * @param [type] $needle
