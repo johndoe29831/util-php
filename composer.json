@@ -1,0 +1,19 @@
+{
+    "name": "jd29/util",
+    "description": "util php",
+    "authors": [
+        {
+            "name": "john doe 29831",
+            "email": "johndoe29831@gmail.com"
+        }
+    ],
+    "require": {},
+    "require-dev": {
+        "digitalnature/php-ref": "dev-master"
+    },    
+    "autoload": {
+        "psr-4": {
+            "Jd29\\": "src"
+        }
+    }    
+}
