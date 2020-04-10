@@ -13,7 +13,8 @@
     },    
     "autoload": {
         "psr-4": {
-            "Jd29\\": "src"
+            "Jd29\\": "src",
+            "Jd29\\Slim3\\": "src/slim3"
         }
     }    
 }
