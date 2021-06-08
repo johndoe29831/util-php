@@ -6,6 +6,7 @@ use League\Plates\Extension\ExtensionInterface;
 use Psr\Http\Message\UriInterface;
 use Slim\Interfaces\RouterInterface;
 
+
 class PlatesExtension implements ExtensionInterface
 {
     /**
@@ -14,7 +15,7 @@ class PlatesExtension implements ExtensionInterface
     private $router;
 
     /**
-     * @var \Psr\Http\Message\UriInterface
+     * @var \Slim\Http\Uri
      */
     private $uri;
 
