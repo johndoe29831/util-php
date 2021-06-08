@@ -103,6 +103,18 @@ class TextDB {
 	 */
 	protected $_FLAG_ACTION = array();
 
+	/**
+	 * CSV action
+	 * @var array
+	 */
+	protected $_CSV_ACTION = array();
+
+
+	/**
+	 * csv data
+	 * @var array
+	 */
+	protected $_CSV_DATA = array();
 
     /**
      * construct function
@@ -140,7 +152,7 @@ class TextDB {
             'table_extension' => '.php',
             'table_name_pattan' => '#^[A-Za-z0-9][A-Za-z0-9_\-\.]+$#',
 			'field_name_pattan' => '#^[A-Za-z0-9][A-Za-z0-9_\-\.]+$#',
-            'file_permisson'  => 0666,
+            'file_permission'  => 0666,
             'dir_permission'  => 0777,
             'dir_tree_max' => 20,
             'lock_name' => '.textdb_lock',
@@ -148,8 +160,16 @@ class TextDB {
             'lock_retry_max' => 5,
 			'write_retry_max' => 5,
 			'write_retry_usleep' => 200000,
+
             'flag_extension' => '.flag',
             'flag_name_pattan' => '#^[A-Za-z0-9][A-Za-z0-9_\-\.]+$#',
+
+            'csv_name_pattan' => '#^[A-Za-z0-9][A-Za-z0-9_\-\.]+$#',
+            'csv_extension' => '.csv',
+            'csv_temp_pattan' => '/\.tmp\.(\d+?)\.csv$/i',
+			'csv_temp_format' => '.tmp.%02d.csv',
+			'csv_append_max' => 50,
+			
         ];
 
         $this->_OPTIONS = $options + $defaults;
@@ -418,6 +438,20 @@ class TextDB {
 	}
 
 	/**
+	 * 連想配列の確認
+	 * 
+	 * @param mixed $var
+	 * @return bool
+	 */
+	public function is_hash($var) {
+		if (!is_array($var) or !count($var)) return false;
+		if (array_values($var) === $var) return false;
+		
+		return true;
+	}
+
+
+	/**
 	 * トランザクション 開始
 	 * 
 	 * @return bool
@@ -506,6 +540,14 @@ class TextDB {
 		// フラグの初期化
 		$this->_FLAG_ACTION = array();
 		
+		// CSVの初期化
+		foreach ($this->_CSV_DATA as $path => $data) {
+			if (!empty($data['temp_file']) and file_exists($data['temp_file']) and @is_file($data['temp_file'])) {
+				@unlink($data['temp_file']);
+			}
+		}
+		$this->_CSV_DATA = array();
+		$this->_CSV_ACTION = array();
 		
 		// ロックパスの取得
 		$lock_dir = $this->get_lock_dir();
@@ -670,7 +712,9 @@ class TextDB {
 		}
 
 		// テーブルの書き込み
-		if (!$this->_write_table($table_paths)) return false;
+		if (count($table_paths)) {
+			if (!$this->_write_table($table_paths)) return false;
+		}
 		
 		// テーブルの削除の登録
 		foreach ($this->_TABLE_DROP as $table_path => $bool) {
@@ -711,6 +755,24 @@ class TextDB {
 				}
 			}
 		}
+
+		// CSVの実行
+		foreach ($this->_CSV_DATA as $path => $data) {
+			if (!empty($data['temp_file']) and file_exists($data['temp_file']) and @is_file($data['temp_file'])) {
+				if (file_exists($data['file']) and @is_file($data['file'])) {
+					@unlink($data['file']);
+				}
+				@rename($data['temp_file'], $data['file']);
+			}
+		}
+		foreach ($this->_CSV_ACTION as $action) {
+			if ($action['type'] == 'delete') {
+				if (file_exists($action['source'])) {
+					@unlink($action['source']);
+				}
+			}
+		}
+
 		
 		// トリガーの初期化
 		$this->commit_clear_trigger();
@@ -718,6 +780,10 @@ class TextDB {
 		
 		// フラグの初期化
 		$this->_FLAG_ACTION = array();
+
+		// CSVの初期化
+		$this->_CSV_DATA = array();
+		$this->_CSV_ACTION = array();
 		
 		// ロックパスの取得
 		$lock_dir = $this->get_lock_dir();
@@ -1040,8 +1106,6 @@ class TextDB {
 	 * @return bool
 	 */
 	protected function _write_table ($table_path) {
-
-
 		$table_paths = array();
 		if (is_array($table_path)) {
 			$table_paths = $table_path;
@@ -1101,9 +1165,6 @@ class TextDB {
 					$this->_add_error(sprintf('テーブルファイルの書き込み前に修正がありました [%s]', $table_path));
 					break 2;
 				}
-				#r($this->_TABLE_DATA[$table_path]['mtime']);
-
-
 				
 				/*
 				if (($fp[$table_path] = fopen($table_path, 'r+b')) === false) {
@@ -1138,55 +1199,6 @@ class TextDB {
 		}
 
 		// ファイルの書き込み
-		/*
-		foreach (range(1, $this->get_option('write_retry_max')) as $n) {
-				
-		}
-		*/
-
-		/*
-		for ($i=0, $i_max=count($table_paths); $i<$i_max; $i++) {
-			$table_path = $table_paths[$i];
-			if (!isset($fp[$table_path])) {
-				continue;
-			}
-			
-			ftruncate($fp[$table_path], 0);
-			rewind($fp[$table_path]);
-			
-			fwrite($fp[$table_path], "<?php die(); ?>\n");
-			#fwrite($fp[$table_path], $this->_TABLE_DATA[$table_path]['primary_no'] . "\n");
-			fwrite($fp[$table_path], $this->fputcsv(array('no', 'type')));
-			fwrite($fp[$table_path], $this->fputcsv(array($this->_TABLE_DATA[$table_path]['primary_no'], $this->_TABLE_DATA[$table_path]['type'])));
-
-			#fwrite($fp[$table_path], implode("\t", $this->_TABLE_DATA[$table_path]['field']) . "\n");
-			fwrite($fp[$table_path], $this->fputcsv($this->_TABLE_DATA[$table_path]['field']));
-
-			for ($o_i=0, $o_max=count($this->_TABLE_DATA[$table_path]['order']); $o_i<$o_max; $o_i++) {
-				$data_key = $this->_TABLE_DATA[$table_path]['order'][$o_i];
-				
-				$data = array($this->_TABLE_DATA[$table_path]['data'][$data_key][0]);
-				for ($f_i=1, $f_max=count($this->_TABLE_DATA[$table_path]['field']); $f_i<$f_max; $f_i++) {
-					#$data[] = str_replace(array('#', "\x0D\x0A", "\x0D", "\x0A", "\x09"), array('##', '#n', '#n', '#n', '#t'), $this->_TABLE_DATA[$table_path]['data'][$data_key][$f_i]);
-					$data[] = $this->_TABLE_DATA[$table_path]['data'][$data_key][$f_i];
-				}
-				
-				#fwrite($fp[$table_path], implode("\t", $data));
-				#fwrite($fp[$table_path], "\n");
-				fwrite($fp[$table_path], $this->fputcsv($this->_TABLE_DATA[$table_path]['field']));
-			}
-			
-			#@flock($fp[$table_path], LOCK_UN);
-			fclose($fp[$table_path]);
-			@chmod($table_path, $this->get_option('file_permission'));
-
-			if (filesize($table_path)) {
-				unset($fp[$table_path]);
-			}
-			
-		}
-		*/
-
 		$table_list = $table_paths;
 		foreach (range(1, $this->get_option('write_retry_max')) as $n) {
 			foreach (array_values($table_list) as $table_path) {
@@ -1353,24 +1365,6 @@ class TextDB {
 				break;
 			}
 
-			/*
-			//
-			$field_str = trim(fgets($fp));
-			if (!strlen($field_str)) break;
-			$field_array = explode("\t", $field_str);
-			
-			$field = array();
-			for ($i=0, $i_max=count($field_array); $i<$i_max; $i++) {
-				$f = $field_array[$i];
-				
-				if (is_string($f) and strlen($f) and strpos($f, " ") === false) {
-					$field[] = $f;
-				}
-			}
-			
-			if (count($field_array) != count($field)) break;
-			*/
-			
 			$field = array();
 			for ($i=0, $i_max=count($csv_col); $i<$i_max; $i++) {
 				$f = $csv_col[$i];
@@ -1390,7 +1384,6 @@ class TextDB {
 			$table_data['type'] = $data_type;
 			
 			while (!feof($fp)) {
-				#$data = explode("\t", rtrim(fgets($fp)));
 				$data =  $this->fgetcsv($fp);
 
 				if (!$this->check_primary_no($data[0])) continue;
@@ -1404,10 +1397,8 @@ class TextDB {
 				
 				$table_data['data'][$p_str] = array($p_str);
 				for ($i=1, $i_max=count($field); $i<$i_max; $i++ ) {
-					#$table_data['data'][$p_str][$i] = str_replace(array('{*+-BR-+*}', '{*+-TAB-+*}'), array("\n", "\t"), (isset($data[$i]) ? $data[$i] : ''));
 					#$table_data['data'][$p_str][$i] = isset($data[$i]) ? (strpos($data[$i], '#') !== false ? preg_replace_callback('/(#+)([n|t]?)/', array($this, '_decode_data'), $data[$i]) : $data[$i]) : '';
-					#$table_data['data'][$p_str][$i] = isset($data[$i]) ? (strpos($data[$i], '#') !== false ? preg_replace_callback('/(#+)([n|t]?)/', array($this, '_decode_data'), $data[$i]) : $data[$i]) : '';
-					$table_data['data'][$p_str][$i] = isset($data[$i]) ? (strpos($data[$i], '\\') !== false ? preg_replace_callback('/(\\+)([n|t]?)/', array($this, '_decode_data'), $data[$i]) : $data[$i]) : '';
+					$table_data['data'][$p_str][$i] = isset($data[$i]) ? (strpos($data[$i], '\\') !== false ? preg_replace_callback('/(\\+)([n]?)/', array($this, '_decode_data'), $data[$i]) : $data[$i]) : '';
 				}
 				
 			}
@@ -1748,14 +1739,14 @@ class TextDB {
 	}
 	
 	/**
-	 * NOの存在の確認
+	 * テーブル NOの存在の確認
 	 * 
 	 * @param string $dir
 	 * @param string $table_name
 	 * @param string $no
 	 * @return bool
 	 */
-	public function NO_EXISTS ($dir, $table_name, $no) {
+	public function TABLE_EXISTS_NO ($dir, $table_name, $no) {
 		if (!$this->check_primary_no($no)) return $this->_add_error('NOを正しく認識できません');
 		$no = strval($no);
 		
@@ -1770,13 +1761,13 @@ class TextDB {
 	}
 	
 	/**
-	 * NOの取得
+	 * テーブル NOの取得
 	 *
 	 * @param string $dir
 	 * @param string $table_name
 	 * @return int
 	 */
-	public function NO_GET ($dir, $table_name) {
+	public function TABLE_GET_NO ($dir, $table_name) {
 		// テーブルパスの取得
 		$table_path = '';
 		if (!$this->get_table_path($dir, $table_name, $table_path)) return false;
@@ -1823,7 +1814,7 @@ class TextDB {
 		if (!is_array($hash)) return $this->_add_error('連想配列を指定してください');
 		
 		//
-		if ($this->NO_EXISTS($dir, $table_name, $no)) {
+		if ($this->TABLE_EXISTS_NO($dir, $table_name, $no)) {
 			$r = $this->UPDATE($dir, $table_name, $no,  $hash, $fetch);
 			return ($r === false) ? false : true;
 		}
@@ -2153,6 +2144,23 @@ class TextDB {
 		
 	}
 	
+	/**
+	 * テーブル フィールドの取得
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @return mixed
+	 */
+	public function TABLE_GET_FIELD ($dir, $table_name) {
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_table_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_table($table_path)) return false;
+		
+		return $this->_TABLE_DATA[$table_path]['field'];
+	}
 	
 	/**
 	 * テーブル フィールドの変更
@@ -2180,7 +2188,7 @@ class TextDB {
 		for ($i=0, $i_max=count($field); $i<$i_max; $i++) {
 			$f = $field[$i];
 			
-			if (is_string($f) and strlen($f) and strpos($f, " ") === false and strpos($f, "\n") === false and strpos($f, "\r") === false and strpos($f, "\t") === false) {
+			if ($this->_check_field_name($f)) {
 				$field_[] = $f;
 			}
 			
@@ -2231,7 +2239,7 @@ class TextDB {
 	 * @param boolean $overwrite
 	 * @return bool
 	 */
-	public function TABLE_RENAME ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=true) {
+	public function TABLE_RENAME ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=false) {
 		if (!$this->TABLE_COPY($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite)) return false;
 		return $this->TABLE_DROP($source_dir, $source_table_name);
 	}
@@ -2246,7 +2254,7 @@ class TextDB {
 	 * @param bool $overwrite
 	 * @return bool
 	 */
-	public function TABLE_COPY ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=true) {
+	public function TABLE_COPY ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=false) {
 		// テーブル名の確認
 		if (!$this->_check_table_name($dest_table_name)) return false;
 		
@@ -2327,7 +2335,7 @@ class TextDB {
 	 * @param string $table_name
 	 * @return bool
 	 */
-	public function DATA_CLEAR ($dir, $table_name) {
+	public function TABLE_DATA_CLEAR ($dir, $table_name) {
 		// テーブルパスの取得
 		$table_path = '';
 		if (!$this->get_table_path($dir, $table_name, $table_path)) return false;
@@ -2355,7 +2363,7 @@ class TextDB {
 	 * @param string $table_name
 	 * @return int
 	 */
-	public function DATA_COUNT ($dir, $table_name) {
+	public function TABLE_DATA_COUNT ($dir, $table_name) {
 		// テーブルパスの取得
 		$table_path = '';
 		if (!$this->get_table_path($dir, $table_name, $table_path)) return false;
@@ -2567,7 +2575,7 @@ class TextDB {
 	 * @param string $flag_name
 	 * @return void
 	 */
-	public function FLAG_DELETE ($dir, $flag_name) {
+	public function FLAG_DROP ($dir, $flag_name) {
 		if (strpos($dir, $this->_ROOT_DIR) !== 0) {
 			return $this->_add_error(sprintf('ルートディレクトリ以下以外のディレクトリです [%s]', $dir));
 		}
@@ -2652,7 +2660,7 @@ class TextDB {
 
 		// データのクリア
 		if ($clear) {
-			$this->DATA_CLEAR($dir, $table_name);
+			$this->TABLE_DATA_CLEAR($dir, $table_name);
 		}
 
 		// 連想配列の更新
@@ -2720,7 +2728,1046 @@ class TextDB {
 		return true;
 	}
 
+	/**
+	 * CSVのファイルパスを取得
+	 * 
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param string $table_path
+	 * @return bool
+	 */
+	public function get_csv_path ($dir, $table_name, &$table_path) {
+		// テーブル名の確認
+		if (!strlen($table_name)) return false;
+		
+		// テーブル名の確認
+		if (!$this->_check_table_name($table_name)) return false;
+		
+		// ルート以下の確認
+		$dir = $this->_get_virtual_dir_path($dir);
+		
+		if (strpos($dir, $this->_ROOT_DIR) !== 0) {
+			return $this->_add_error(sprintf('ルートディレクトリ以下以外のディレクトリです [%s : %s]', __FUNCTION__, $dir));
+		}
+		
+		$table_path = $dir . $table_name . $this->get_option('csv_extension');
+		
+		return true;
+	}
+
+	/**
+	 * CSV TEMPのファイルパスを取得
+	 * 
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param string $table_path
+	 * @param int $count
+	 * @return bool
+	 */
+	public function get_csv_temp_path ($dir, $table_name, &$table_path, $count) {
+		// テーブル名の確認
+		if (!strlen($table_name)) return false;
+		
+		// テーブル名の確認
+		if (!$this->_check_table_name($table_name)) return false;
+		
+		// ルート以下の確認
+		$dir = $this->_get_virtual_dir_path($dir);
+		
+		if (strpos($dir, $this->_ROOT_DIR) !== 0) {
+			return $this->_add_error(sprintf('ルートディレクトリ以下以外のディレクトリです [%s : %s]', __FUNCTION__, $dir));
+		}
+		
+		$table_path = $dir . $table_name . sprintf($this->get_option('csv_temp_format'), $count);
+		
+		return true;
+	}		
+
+	/**
+	 * CSVの存在の確認
+	 * 
+	 * @param string $dir 
+	 * @param string $table_name
+	 * @return bool
+	 */
+	public function CSV_EXISTS ($dir, $table_name) {
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		return (is_file($table_path) or array_key_exists($table_path, $this->_CSV_DATA));
+	}
 
 
+	/**
+	 * CSV名の確認
+	 * 
+	 * @param string $name
+	 * @return bool
+	 */
+	protected function _check_csv_name ($name) {
+		$flag = false;
+		do {
+			if (!is_string($name)) {
+				break;
+			}
+			if (!strlen($name)) {
+				break;
+			}
+			if (!preg_match($this->get_option('csv_name_pattan'), $name)) {
+				break;
+			}
+			if ($this->_str_endswith(strtolower($name), strtolower($this->get_option('csv_extension')))) {
+				break;
+			}
+			if (preg_match($this->get_option('csv_temp_pattan'), $name)) {
+				break;
+			}
+			
+			$flag = true;
+		} while (false);
+
+		if (!$flag) {
+			return $this->_add_error(sprintf('CSV名に利用できない文字を含んでいます [%s]', $name));
+		} else {
+			return true;
+		}
+	}
+
+	/**
+	 * CSV APPEND
+	 *
+	 * @param string $path
+	 * @param array $hash
+	 * @param bool $append
+	 * @return int
+	 */
+	protected function _csv_append ($path, $hash, $append=true) {
+		// ディレクトリの確認
+		if (!$this->_make_data_dir($path)) return false;
+
+		#r($path);
+
+		// 書き込み
+		foreach (range(1, $this->get_option('write_retry_max')) as $i) {
+			if ($append) {
+				$file_size = file_put_contents($path, $this->fputcsv(array_values($hash)), FILE_APPEND | LOCK_EX);
+			} else {
+				$file_size = file_put_contents($path, $this->fputcsv(array_values($hash)), LOCK_EX);
+			}
+			
+			
+			if (!empty($file_size)) {
+				break;
+			}
+			usleep($this->get_option('write_retry_usleep'));
+		}
+
+		@chmod($path, $this->get_option('file_permission'));
+		return $file_size;
+	}
+
+	/**
+	 * CSV APPEND List
+	 *
+	 * @param string $path
+	 * @param array $hash_list
+	 * @return int
+	 */
+	protected function _csv_append_list ($path, $hash_list) {
+		// ディレクトリの確認
+		if (!$this->_make_data_dir($path)) return false;
+
+		#r($path);
+
+		// 書き込み
+		$content = array();
+		foreach ($hash_list as $hash) {
+			$content[] = $this->fputcsv(array_values($hash));
+		}
+		foreach (range(1, $this->get_option('write_retry_max')) as $i) {
+			$file_size = file_put_contents($path, $content, FILE_APPEND | LOCK_EX);
+			
+			if (!empty($file_size)) {
+				break;
+			}
+			usleep($this->get_option('write_retry_usleep'));
+		}
+
+		@chmod($path, $this->get_option('file_permission'));
+		return $file_size;
+	}
+
+
+	/**
+	 * CSVの作成
+	 * 
+	 * @param string $dir 
+	 * @param string $table
+	 * @param array $field
+	 * @param string $type
+	 * @return bool
+	 */
+	public function CSV_CREATE ($dir, $table_name, $field) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// データディレクトリの確認
+		if (!$this->_check_data_dir($dir)) {
+			return false;
+		}
+		
+		// テーブル名の確認
+		if (!$this->_check_csv_name($table_name)) {
+			return false;
+		}
+		
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) {
+			return false;
+		}
+		
+		// テーブルの存在の確認
+		if ($this->CSV_EXISTS($dir, $table_name)) {
+			return $this->_add_error(sprintf('指定のテーブルはすでに存在しています [%s]', $table_path));
+		}
+		
+		// 構造の確認
+		if (!$this->is_array($field)) {
+			return $this->_add_error(sprintf('フィールドを正しく認識できません [%s]', $table_path));
+		}
+		
+		$field_ = array();
+		for ($i=0, $i_max=count($field); $i<$i_max; $i++) {
+			$f = $field[$i];
+
+			if ($this->_check_field_name($f)) {
+				$field_[] = $f;
+			}
+		}
+		
+		if (count($field) != count($field_)) {
+			return $this->_add_error(sprintf('フィールドを設定が正しくありません [%s]', $table_path));
+		}
+
+		// テーブルの設定
+		$table_temp_path = '';
+		if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, 1)) {
+			return false;
+		}
+
+		$this->_CSV_DATA[$table_path] = array(
+			'field' => $field_,
+			'temp_file' => $table_temp_path,
+			'temp_count' => 1,
+			'file' => $table_path,
+			'mtime' => null,
+			'action' => array('create'),
+		);
+
+
+		// CSVの保存
+		$this->_csv_append($table_temp_path, $field_, false);
+
+		return true;
+	}
+
+
+	/**
+	 * CSV 読み込み
+	 *
+	 * @param string $table_path
+	 * @return bool
+	 */
+	protected function _read_csv($table_path) {
+		if (array_key_exists($table_path, $this->_CSV_DATA)) return true;
+
+		// テーブルディレクトリの確認
+		$data_dir = dirname($table_path);
+		if (!$this->_check_data_dir($data_dir)) {
+			return false;
+		}
+		
+		// テーブルファイルの確認
+		if (!is_file($table_path)) {
+			return $this->_add_error(sprintf('CSVファイルが存在しません [%s]', $table_path));
+		}
+		if (!is_readable($table_path)) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みできません [%s]', $table_path));
+		}
+		
+		// テーブルファイルを開く
+		if (($fp = @fopen($table_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $table_path));
+		}
+
+		// 1行目 システムヘッダ
+		$csv_head = $this->fgetcsv($fp);
+		fclose($fp);
+		if (empty($csv_head) or (count($csv_head) == 1 and $csv_head[0] == '')) {
+			return $this->_add_error(sprintf('CSVファイルの構造が正しくありません [%s]', $table_path));
+		}
+		
+
+		$this->_CSV_DATA[$table_path] = array(
+			'field' => $csv_head,
+			'temp_file' => null,
+			'temp_count' => 0,
+			'file' => $table_path,
+			'mtime' => filemtime($table_path),
+			'action' => array(),
+		);
+
+		return true;
+
+	}
+
+	/**
+	 * CSV 追加書き込み
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param string $hash
+	 * @return mixed
+	 */
+	public function CSV_APPEND ($dir, $table_name, $hash) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// ハッシュの確認
+		if (!is_array($hash)) return $this->_add_error('連想配列を指定してください');
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+
+		// テーブル 読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		// CSVの準備
+		if (empty($table_data['temp_file'])) {
+			$table_data['temp_count']++;
+			$table_temp_path = '';
+			if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, $table_data['temp_count'])) {
+				return false;
+			}
+			$table_data['temp_file'] = $table_temp_path;
+			copy($table_data['file'], $table_data['temp_file']);
+		}
+		$table_temp_path = $table_data['temp_file'];		
+
+		if (!in_array('append', $table_data['action'])) {
+			$table_data['action'][] = 'append';
+		}
+
+		// CSVの保存
+		$csv_arr = array();
+		foreach ($table_data['field'] as $key) {
+			$csv_arr[] = isset($hash[$key]) ? $hash[$key] : '';
+		}
+		return $this->_csv_append($table_temp_path, $csv_arr);
+	}
+	
+	/**
+	 * CSV SELECT
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param mixed $where
+	 * @return array
+	 */
+	public function CSV_SELECT ($dir, $table_name, $where=null) {
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		$target_path = $table_path;
+		if (!empty($table_data['temp_file']) and file_exists($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+		$csv_head = $table_data['field'];
+
+		// 変数の設定
+		$where_cb = null;
+		$where_no = array();
+		$fetch_cb = null;
+		$order_cb =null;
+		
+		
+		// 条件の確認
+		if (is_callable($where)) {
+			$where_cb = $where;
+		}
+
+		// whereの実行
+		$csv_list = array();
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+
+			if (is_callable($where_cb)) {
+				if (call_user_func_array($where_cb, array($csv_hash))) {
+					$csv_list[] = $csv_hash;
+				}
+			} else {
+				$csv_list[] = $csv_hash;
+			}
+
+			#r($csv_hash);
+		}
+		fclose($csv_fp);
+
+		return $csv_list;
+	}
+
+	/**
+	 * CSV SELECT CALLBACK
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param mixed $callback
+	 * @return bool
+	 */
+	public function CSV_SELECT_CALLBACK ($dir, $table_name, $callback) {
+		// callbackの確認
+		if (!is_callable($callback)) {
+			return $this->_add_error('コールバックを指定してください');
+		}
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		$target_path = $table_path;
+		if (!empty($table_data['temp_file']) and file_exists($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+		$csv_head = $table_data['field'];
+
+		// whereの実行
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+
+			call_user_func_array($callback, array($csv_hash));
+		}
+		fclose($csv_fp);
+
+		return true;
+	}
+
+	/**
+	 * CSV UPDATE
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param mixed $where
+	 * @param array $hash
+	 * @return bool
+	 */
+	public function CSV_UPDATE ($dir, $table_name, $where, $hash) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// ハッシュの確認
+		if (!is_array($hash)) return $this->_add_error('連想配列を指定してください');
+
+		// whereの確認
+		if (!is_callable($where)) {
+			return $this->_add_error('コールバックを指定してください');
+		}
+		$where_cb = $where;
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		// CSVの準備
+
+		$target_path = $table_data['file'];
+		if (!empty($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+
+		$table_data['temp_count']++;
+		$table_temp_path = '';
+		if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, $table_data['temp_count'])) {
+			return false;
+		}
+		$table_data['temp_file'] = $table_temp_path;
+		
+		if (!in_array('update', $table_data['action'])) {
+			$table_data['action'][] = 'update';
+		}
+		$csv_head = $table_data['field'];
+
+
+		// 新ファイルの準備
+		$this->_csv_append($table_temp_path, $csv_head, false);
+
+		// whereの実行
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		$csv_append_list = array();
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+			if (call_user_func_array($where_cb, array($csv_hash))) {
+				#$csv_list[] = $csv_hash;
+				foreach ($csv_head as $csv_idx => $csv_key) {
+					if (isset($hash[$csv_key])) {
+						$csv_hash[$csv_key] = $hash[$csv_key];
+					}
+				}
+				
+			}
+			$csv_arr = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_arr[] = $csv_hash[$csv_key];
+			}
+			
+			#$this->_csv_append($table_temp_path, $csv_arr);
+
+			$csv_append_list[] = $csv_arr;
+			if (count($csv_append_list) >= $this->get_option('csv_append_max')) {
+				$this->_csv_append_list($table_temp_path, $csv_append_list);
+				$csv_append_list = array();
+			}
+		}
+		fclose($csv_fp);
+
+		if (count($csv_append_list)) {
+			$this->_csv_append_list($table_temp_path, $csv_append_list);
+		}
+
+		if ($target_path != $table_data['file']) {
+			@unlink($target_path);
+		}
+
+		return true;
+	}
+
+	/**
+	 * CSV UPDATE CALLBACK
+	 * 
+	 * コールバックの返り値
+	 * hash 上書き
+	 * false 削除
+	 * null そのまま保存
+	 * 
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param mixed $callback  
+	 * @return bool
+	 */
+	public function CSV_UPDATE_CALLBACK ($dir, $table_name, $callback) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// whereの確認
+		if (!is_callable($callback)) {
+			return $this->_add_error('コールバックを指定してください');
+		}
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		// CSVの準備
+		$target_path = $table_data['file'];
+		if (!empty($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+
+		$table_data['temp_count']++;
+		$table_temp_path = '';
+		if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, $table_data['temp_count'])) {
+			return false;
+		}
+		$table_data['temp_file'] = $table_temp_path;
+		
+		if (!in_array('update', $table_data['action'])) {
+			$table_data['action'][] = 'update';
+		}
+		$csv_head = $table_data['field'];
+
+		// 新ファイルの準備
+		$this->_csv_append($table_temp_path, $csv_head, false);
+
+		// whereの実行
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		$csv_append_list = array();
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+
+			$ret_hash = call_user_func_array($callback, array($csv_hash));
+			if ($ret_hash === false) {
+				continue;
+			}
+			if ($this->is_hash($ret_hash)) {
+				$csv_hash = array();
+				foreach ($csv_head as $csv_idx => $csv_key) {
+					if (isset($ret_hash[$csv_key])) {
+						$csv_hash[$csv_key] = $ret_hash[$csv_key];
+					}
+				}
+			}
+
+			$csv_arr = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_arr[] = $csv_hash[$csv_key];
+			}
+
+			$csv_append_list[] = $csv_arr;
+			if (count($csv_append_list) >= $this->get_option('csv_append_max')) {
+				$this->_csv_append_list($table_temp_path, $csv_append_list);
+				$csv_append_list = array();
+			}
+			#$this->_csv_append($table_temp_path, $csv_arr);
+		}
+		fclose($csv_fp);
+
+		if (count($csv_append_list)) {
+			$this->_csv_append_list($table_temp_path, $csv_append_list);
+		}
+
+		if ($target_path != $table_data['file']) {
+			@unlink($target_path);
+		}
+
+		return true;
+	}
+
+
+	/**
+	 * CSV DELETE
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param mixed $where
+	 * @return bool
+	 */
+	public function CSV_DELETE ($dir, $table_name, $where) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// whereの確認
+		if (!is_callable($where)) {
+			return $this->_add_error('コールバックを指定してください');
+		}
+		$where_cb = $where;
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		// CSVの準備
+
+		$target_path = $table_data['file'];
+		if (!empty($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+
+		$table_data['temp_count']++;
+		$table_temp_path = '';
+		if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, $table_data['temp_count'])) {
+			return false;
+		}
+		$table_data['temp_file'] = $table_temp_path;
+		
+		if (!in_array('delete', $table_data['action'])) {
+			$table_data['action'][] = 'delete';
+		}
+		$csv_head = $table_data['field'];
+
+
+		// 新ファイルの準備
+		$this->_csv_append($table_temp_path, $csv_head, false);
+
+		// whereの実行
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		$csv_append_list = array();
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+			if (call_user_func_array($where_cb, array($csv_hash))) {
+				continue;
+			}
+
+			$csv_arr = array();
+			foreach ($csv_head as $csv_idx => $csv_key) {
+				$csv_arr[] = $csv_hash[$csv_key];
+			}
+
+			#$this->_csv_append($table_temp_path, $csv_arr);
+			$csv_append_list[] = $csv_arr;
+			if (count($csv_append_list) >= $this->get_option('csv_append_max')) {
+				$this->_csv_append_list($table_temp_path, $csv_append_list);
+				$csv_append_list = array();
+			}
+		}
+		fclose($csv_fp);
+
+		if (count($csv_append_list)) {
+			$this->_csv_append_list($table_temp_path, $csv_append_list);
+		}
+
+		if ($target_path != $table_data['file']) {
+			@unlink($target_path);
+		}
+
+		return true;
+	}
+
+	/**
+	 * CSV DROP
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @return bool
+	 */
+	public function CSV_DROP ($dir, $table_name) {
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+
+		$this->_CSV_ACTION[] = array(
+			'type' => 'delete',
+			'source' => $table_path,
+		);
+		
+		return true;
+	}
+
+	/**
+	 * CSV GET FIELD
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @return mixed
+	 */
+	public function CSV_GET_FIELD ($dir, $table_name) {
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		$target_path = $table_path;
+		if (!empty($table_data['temp_file']) and file_exists($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+		$csv_head = $table_data['field'];
+
+		return $csv_head;
+	}
+
+	/**
+	 * CSV フィールドの変更
+	 *
+	 * @param string $dir
+	 * @param string $table_name
+	 * @param array $field
+	 * @return bool
+	 */	
+	public function CSV_ALTER_FIELD ($dir, $table_name, $field) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+
+		// テーブルパスの取得
+		$table_path = '';
+		if (!$this->get_csv_path($dir, $table_name, $table_path)) return false;
+
+		// 構造の確認
+		if (!$this->is_array($field)) {
+			return $this->_add_error(sprintf('フィールドを正しく認識できません [%s]', $table_path));
+		}
+		
+		$field_new = array();
+		for ($i=0, $i_max=count($field); $i<$i_max; $i++) {
+			$f = $field[$i];
+
+			if ($this->_check_field_name($f)) {
+				$field_new[] = $f;
+			}
+		}
+		
+		if (count($field) != count($field_new)) {
+			return $this->_add_error(sprintf('フィールドを設定が正しくありません [%s]', $table_path));
+		}
+		
+		// テーブルの読み込み
+		if (!$this->_read_csv($table_path)) return false;
+		
+		// テーブルデータの取得
+		$table_data =& $this->_CSV_DATA[$table_path];
+
+		if ($table_data['field'] === $field_new) {
+			return true;
+		}
+
+		// CSVの準備
+		$target_path = $table_data['file'];
+		if (!empty($table_data['temp_file'])) {
+			$target_path = $table_data['temp_file'];
+		}
+
+		$table_data['temp_count']++;
+		$table_temp_path = '';
+		if (!$this->get_csv_temp_path($dir, $table_name, $table_temp_path, $table_data['temp_count'])) {
+			return false;
+		}
+		$table_data['temp_file'] = $table_temp_path;
+		
+		if (!in_array('update', $table_data['action'])) {
+			$table_data['action'][] = 'alter';
+		}
+
+		$csv_head_old = $table_data['field'];
+		$csv_head_new = $field_new;
+		$table_data['field'] = $field_new;
+
+
+		// 新ファイルの準備
+		$this->_csv_append($table_temp_path, $csv_head_new, false);
+
+		// ファイルの読み込み
+		if (($csv_fp = @fopen($target_path, 'r')) === false) {
+			return $this->_add_error(sprintf('CSVファイルを読み込みに失敗しました [%s]', $target_path));
+		}
+
+		// 1行目を無視
+		$this->fgetcsv($csv_fp);
+
+		// 2行目以降
+		$csv_append_list = array();
+		while (($csv_col = $this->fgetcsv($csv_fp)) !== false) {
+			if (count($csv_col) == 1 and $csv_col[0] == '') {
+				continue;
+			}
+			
+			$csv_hash = array();
+			foreach ($csv_head_old as $csv_idx => $csv_key) {
+				$csv_hash[$csv_key] = isset($csv_col[$csv_idx]) ? $csv_col[$csv_idx] : '';
+			}
+
+			$csv_arr = array();
+			foreach ($csv_head_new as $csv_idx => $csv_key) {
+				$csv_arr[] = isset($csv_hash[$csv_key]) ? $csv_hash[$csv_key] : '';
+			}
+			
+			#$this->_csv_append($table_temp_path, $csv_arr);
+
+			$csv_append_list[] = $csv_arr;
+			if (count($csv_append_list) >= $this->get_option('csv_append_max')) {
+				$this->_csv_append_list($table_temp_path, $csv_append_list);
+				$csv_append_list = array();
+			}
+		}
+		fclose($csv_fp);
+
+		if (count($csv_append_list)) {
+			$this->_csv_append_list($table_temp_path, $csv_append_list);
+		}
+
+		if ($target_path != $table_data['file']) {
+			@unlink($target_path);
+		}
+
+		return true;
+
+
+	}
+
+	/**
+	 * CSV コピー
+	 *
+	 * @param string $source_dir
+	 * @param string $source_table_name
+	 * @param string $dest_dir
+	 * @param string $dest_table_name
+	 * @param boolean $overwrite
+	 * @return bool
+	 */
+	public function CSV_COPY ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=false) {
+		// テーブルパスの取得
+		$source_table_path = '';
+		if (!$this->get_csv_path($source_dir, $source_table_name, $source_table_path)) return false;
+
+		$dest_table_path = '';
+		if (!$this->get_csv_path($dest_dir, $dest_table_name, $dest_table_path)) return false;
+
+		// テーブルの存在の確認
+		if (!$overwrite) {
+			if ($this->CSV_EXISTS($dest_dir, $dest_table_name)) {
+				return $this->_add_error(sprintf('指定のテーブルはすでに存在しています [%s]', $dest_table_path));
+			}
+		}
+
+		// ディレクトリの確認
+		if (!$this->_make_data_dir($dest_table_path)) return false;
+
+		// テーブルの読み込み
+		if (!$this->_read_csv($source_table_path)) return false;
+
+		$target_path = $source_table_path;
+		if (!empty($this->_CSV_DATA[$source_table_path]['temp_file']) and file_exists($this->_CSV_DATA[$source_table_path]['temp_file'])) {
+			$target_path = $this->_CSV_DATA[$source_table_path]['temp_file'];
+		}
+
+		$dest_table_temp_path = '';
+		if (!$this->get_csv_temp_path($dest_dir, $dest_table_name, $dest_table_temp_path, 1)) {
+			return false;
+		}
+
+
+		if (!@copy($target_path, $dest_table_temp_path)) {
+			return $this->_add_error(sprintf('コピーに失敗しました [%s] [%s]', $target_path, $dest_table_temp_path));
+		}
+
+		
+		$this->_CSV_DATA[$dest_table_path] = array(
+			'field' => $this->_CSV_DATA[$source_table_path]['field'],
+			'temp_file' => $dest_table_temp_path,
+			'temp_count' => 1,
+			'file' => $dest_table_path,
+			'mtime' => null,
+			'action' => array('copy'),
+		);
+
+		return true;
+	}
+
+
+	/**
+	 * CSV 名前の変更
+	 *
+	 * @param string $source_dir
+	 * @param string $source_table_name
+	 * @param string $dest_dir
+	 * @param string $dest_table_name
+	 * @param boolean $overwrite
+	 * @return bool
+	 */
+	public function CSV_RENAME ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=false) {
+		if (!$this->CSV_COPY($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite)) {
+			return false;
+		}
+		if (!$this->CSV_DROP($source_dir, $source_table_name)) {
+			return false;
+		}
+		return true;
+	}
 
 }
