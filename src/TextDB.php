@@ -3701,6 +3701,11 @@ class TextDB {
 	 * @return bool
 	 */
 	public function CSV_COPY ($source_dir, $source_table_name, $dest_dir, $dest_table_name, $overwrite=false) {
+		// トランザクションの確認
+		if (!$this->_TRANSACTION_STATUS) {
+			return $this->_add_error('トランザクションは開始されていません');
+		}
+		
 		// テーブルパスの取得
 		$source_table_path = '';
 		if (!$this->get_csv_path($source_dir, $source_table_name, $source_table_path)) return false;
